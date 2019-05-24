@@ -1,8 +1,9 @@
 *.csv
-data/
+*.zip
 .vs
 .vscode
 .DS_Store
 .idea
 __pycache__/
 .pyc
+.ipynb_checkpoints
