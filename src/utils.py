@@ -1,164 +1,125 @@
-# -*- coding: utf-8 -*-
-"""
-Created on Fri May 17 16:29:30 2019
-
-@author: zhuya
-"""
-import pandas as pd
 import numpy as np
-import os
-from sklearn.preprocessing import LabelEncoder
-from scipy.sparse import csr_matrix, hstack
+import scipy.sparse as sp
+import torch
+from pathlib import Path
+import pandas as pd
+import math
 
-def load_data(datadir = '../data'): 
-    # load in all the data
-    gatrain = pd.read_csv(os.path.join(datadir,'gender_age_train.csv'),
-                          index_col='device_id')
-    phone = pd.read_csv(os.path.join(datadir,'phone_brand_device_model.csv'))
-    # Get rid of duplicate device ids in phone
-    phone = phone.drop_duplicates('device_id',keep='first').set_index('device_id')
-    events = pd.read_csv(os.path.join(datadir,'events.csv'),
-                         parse_dates=['timestamp'], index_col='event_id')
-    appevents = pd.read_csv(os.path.join(datadir,'app_events.csv'), 
-                            usecols=['event_id','app_id','is_active'],
-                            dtype={'is_active':bool})
-    applabels = pd.read_csv(os.path.join(datadir,'app_labels.csv'))
-    # feature engineering for using 
-        # phone brand
-        # device model
-        # installed apps
-        # app labels
-        
-    #phone band and device model
-    gatrain['trainrow'] = np.arange(gatrain.shape[0])
-    brandencoder = LabelEncoder().fit(phone.phone_brand)
-    phone['brand'] = brandencoder.transform(phone['phone_brand'])
-    gatrain['brand'] = phone['brand']
-    # this matrix represent the original brand in a sparse matrix 
-    # every row correspond to 1 person, represent by 1-hot vector indicate the brand
-    Xtr_brand = csr_matrix((np.ones(gatrain.shape[0]), 
-                           (gatrain.trainrow, gatrain.brand)))
-    print('Brand features: train shape {}'.format(Xtr_brand.shape))
+def encode_onehot(labels):
+    classes = set(labels)
+    classes_dict = {c: np.identity(len(classes))[i, :] for i, c in
+                    enumerate(classes)}
+    labels_onehot = np.array(list(map(classes_dict.get, labels)),
+                             dtype=np.int32)
+    return labels_onehot
+
+def normalize(mx):
+    """Row-normalize sparse matrix"""
+    rowsum = np.array(mx.sum(1))
+    r_inv = np.power(rowsum, -1).flatten()
+    r_inv[np.isinf(r_inv)] = 0.
+    r_mat_inv = sp.diags(r_inv)
+    mx = r_mat_inv.dot(mx)
+    return mx
+
+
+def accuracy(output, labels):
+    preds = output.max(1)[1].type_as(labels)
+    correct = preds.eq(labels).double()
+    correct = correct.sum()
+    return correct / len(labels)
+
+def sparse_mx_to_torch_sparse_tensor(sparse_mx):
+    """Convert a scipy sparse matrix to a torch sparse tensor."""
+    sparse_mx = sparse_mx.tocoo().astype(np.float32)
+    indices = torch.from_numpy(
+        np.vstack((sparse_mx.row, sparse_mx.col)).astype(np.int64))
+    values = torch.from_numpy(sparse_mx.data)
+    shape = torch.Size(sparse_mx.shape)
+    return torch.sparse.FloatTensor(indices, values, shape)
+
+def multi_relation_load(path="../../data/twitter_1hop", label="dict.csv", 
+                        files=["friend_list.csv", "retweet_list.csv"]):
+    print("Loading data from path {0}".format(path))
+    DATA = Path(path)
+    FILE = [DATA/i for i in files]
+    LABEL = DATA/label
+    data_dfs = []
+    label_df = pd.read_csv(LABEL, sep="\t")
+    for file in FILE:
+        data_dfs.append(pd.read_csv(file, sep="\t"))
+      
+    labeled_ids = label_df["twitter_id"].values
+    labels = [0 if v == "D" else 1 for v in label_df["party"].values]
+    n_labels = len(labels)
+    n_train = math.ceil(n_labels / 10. * 3)
+    n_valid = math.ceil(n_labels / 10. * 3)
+    idx_train = range(n_train)
+    idx_val = range(n_train, n_train + n_valid)
+    idx_test = range(n_train + n_valid, n_labels)
     
-    m = phone.phone_brand.str.cat(phone.device_model)
-    modelencoder = LabelEncoder().fit(m)
-    phone['model'] = modelencoder.transform(m)
-    gatrain['model'] = phone['model']
-    Xtr_model = csr_matrix((np.ones(gatrain.shape[0]), 
-                           (gatrain.trainrow, gatrain.model)))
-    print('Model features: train shape {}'.format(Xtr_model.shape))
+    print("\tprocessing nodes")
     
-    #get app information --> what app is installed
-    appencoder = LabelEncoder().fit(appevents.app_id)
-    appevents['app'] = appencoder.transform(appevents.app_id)
-    napps = len(appencoder.classes_)
-    deviceapps = (appevents.merge(events[['device_id']], how='left',left_on='event_id',right_index=True)
-                           .groupby(['device_id','app'])['app'].agg(['size'])
-                           .merge(gatrain[['trainrow']], how='left', left_index=True, right_index=True)
-                           .reset_index())
+    all_ids = set()
+    for df in data_dfs:
+        all_ids = all_ids.union(set(df[df.columns[0]]))
+        all_ids = all_ids.union(set(df[df.columns[1]]))
+    unlabeled_ids = all_ids - set(labeled_ids)
+    all_id_list = np.concatenate((np.array(labeled_ids, dtype=np.int64), 
+                                 np.array(list(unlabeled_ids), dtype=np.int64)))
+    n_entities = len(all_id_list)
+    idx_map = {j: i for i, j in enumerate(all_id_list)}
     
-    d = deviceapps.dropna(subset=['trainrow'])
-    Xtr_app = csr_matrix((np.ones(d.shape[0]), (d.trainrow, d.app)), 
-                          shape=(gatrain.shape[0],napps))
-    print('Apps data: train shape {}'.format(Xtr_app.shape))
+    print("\tprocessing edges")
+
+    adjs = []
     
-    #get app label data --> the label for installed app --> e.g. game, chat, etc.
-    applabels = applabels.loc[applabels.app_id.isin(appevents.app_id.unique())]
-    applabels['app'] = appencoder.transform(applabels.app_id)
-    labelencoder = LabelEncoder().fit(applabels.label_id)
-    applabels['label'] = labelencoder.transform(applabels.label_id)
-    nlabels = len(labelencoder.classes_)
-    devicelabels = (deviceapps[['device_id','app']]
-                    .merge(applabels[['app','label']])
-                    .groupby(['device_id','label'])['app'].agg(['size'])
-                    .merge(gatrain[['trainrow']], how='left', left_index=True, right_index=True)
-                    .reset_index())
-    devicelabels.head()
+    for data_df in data_dfs:
+        from_idx = np.array(list(map(idx_map.get, data_df[data_df.columns[0]].values)), dtype=np.int64)
+        to_idx = np.array(list(map(idx_map.get, data_df[data_df.columns[1]].values)), dtype=np.int64)
+        counts = np.array(data_df[data_df.columns[2]].values, dtype=np.int64)
+
+        n_edges = len(from_idx)
+
+        adj = sp.csr_matrix((counts, (from_idx, to_idx)),
+                        shape=(n_entities, n_entities),
+                        dtype=np.float32)
+
+        # if build symmetric adjacency matrix
+        # adj = adj + adj.T.multiply(adj.T > adj) - adj.multiply(adj.T > adj)
+        # adj = normalize(adj + np.eye(adj.shape[0]))
+        # adjs.append(adj)
+        # otherwise
+        adjs.append(adj)
+        adjs.append(adj.T)
     
-    d = devicelabels.dropna(subset=['trainrow'])
-    Xtr_label = csr_matrix((np.ones(d.shape[0]), (d.trainrow, d.label)), 
-                          shape=(gatrain.shape[0],nlabels))
-    print('App labels data: train shape {}'.format(Xtr_label.shape))
-    X = hstack((Xtr_brand, Xtr_model, Xtr_app, Xtr_label), format='csr')
-    print('All features: train shape {}'.format(X.shape))
+    edge_indexs = np.array(range(n_entities))
+    self_loop = sp.csr_matrix((np.ones(n_entities), (edge_indexs, edge_indexs)), 
+                              shape=(n_entities, n_entities), dtype=np.float32)
+    adjs.append(self_loop)
+
+    num_neighbors = [adjs[i].sum(1).reshape(n_entities, 1) for i in range(len(adjs))]    
+    # num_neighbors = [np.diff(adjs[i].indptr).reshape(n_entities, 1) for i in range(len(adjs))]
+    for neighbor in num_neighbors:
+        neighbor += 1 # smoothing
+    num_neighbors = [torch.Tensor(neighbors) for neighbors in num_neighbors]
+
+    print("\tprocessing features")
     
-    targetencoder = LabelEncoder().fit(gatrain.group)
-    y = targetencoder.transform(gatrain.group)
-    nclasses = len(targetencoder.classes_)
-    return X, y, nclasses
-
-def load_data_only_brand_app(datadir = '../data'): 
-    gatrain = pd.read_csv(os.path.join(datadir,'gender_age_train.csv'),
-                              index_col='device_id')
-    phone = pd.read_csv(os.path.join(datadir,'phone_brand_device_model.csv'))
-    phone = phone.drop_duplicates('device_id',keep='first').set_index('device_id')
-    events = pd.read_csv(os.path.join(datadir,'events.csv'),
-                         parse_dates=['timestamp'], index_col='event_id')
-    appevents = pd.read_csv(os.path.join(datadir,'app_events.csv'), 
-                            usecols=['event_id','app_id','is_active'],
-                            dtype={'is_active':bool})
-    applabels = pd.read_csv(os.path.join(datadir,'app_labels.csv'))
-    gatrain['trainrow'] = np.arange(gatrain.shape[0])
-    m = phone.phone_brand.str.cat(phone.device_model)
-    modelencoder = LabelEncoder().fit(m)
-    phone['model'] = modelencoder.transform(m)
-    gatrain['model'] = phone['model']
-    #get device model
-    Xtr_model = np.array(gatrain.model, dtype=np.int)
-    print('Model features: train shape {}'.format(Xtr_model.shape))
+    # edge_indexs = np.array(range(n_entities))
+    # features = sp.csr_matrix((np.ones(n_entities), (edge_indexs, edge_indexs)), shape=(n_entities, n_entities), dtype=np.float32) # dummy feature
+    features = np.ones((n_entities, 20))
     
-    #get event list
-    appencoder = LabelEncoder().fit(appevents.app_id)
-    appevents['app'] = appencoder.transform(appevents.app_id)
-    napps = len(appencoder.classes_)
-    deviceapps = (appevents.merge(events[['device_id']], how='left',left_on='event_id',right_index=True)
-                           .groupby(['device_id','app'])['app'].agg(['size'])
-                           .merge(gatrain[['trainrow']], how='left', left_index=True, right_index=True)
-                           .reset_index())
-    d = deviceapps.dropna(subset=['trainrow'])
-    Xtr_app = csr_matrix((np.ones(d.shape[0]), (d.trainrow, d.app)), 
-                          shape=(gatrain.shape[0],napps)) 
-    print('App features: train shape {}'.format(Xtr_app.shape))
+    print("\ttransfering into tensors")
     
-    #get app label data --> the label for installed app --> e.g. game, chat, etc.
-    applabels = applabels.loc[applabels.app_id.isin(appevents.app_id.unique())]
-    applabels['app'] = appencoder.transform(applabels.app_id)
-    labelencoder = LabelEncoder().fit(applabels.label_id)
-    applabels['label'] = labelencoder.transform(applabels.label_id)
-    nlabels = len(labelencoder.classes_)
-    devicelabels = (deviceapps[['device_id','app']]
-                    .merge(applabels[['app','label']])
-                    .groupby(['device_id','label'])['app'].agg(['size'])
-                    .merge(gatrain[['trainrow']], how='left', left_index=True, right_index=True)
-                    .reset_index())
-    devicelabels.head()
-    
-    d = devicelabels.dropna(subset=['trainrow'])
-    Xtr_label = csr_matrix((np.ones(d.shape[0]), (d.trainrow, d.label)), 
-                          shape=(gatrain.shape[0],nlabels))
-    
+    features = normalize(features)
+    # features = sparse_mx_to_torch_sparse_tensor(features)
+    features = torch.Tensor(features)
+    labels = torch.LongTensor(labels)
+    adjs = [sparse_mx_to_torch_sparse_tensor(adj) for adj in adjs]
 
-    print('App features: train shape {}'.format(Xtr_label.shape))
-    #get label
-    targetencoder = LabelEncoder().fit(gatrain.group)
-    y = targetencoder.transform(gatrain.group)
-    print('Label shape {}'.format(y.shape))
-    nclasses = len(targetencoder.classes_)
-    return Xtr_model, Xtr_app, y, nclasses
-    
+    idx_train = torch.LongTensor(idx_train)
+    idx_val = torch.LongTensor(idx_val)
+    idx_test = torch.LongTensor(idx_test)
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
+    return adjs, features, labels, idx_train, idx_val, idx_test, num_neighbors
