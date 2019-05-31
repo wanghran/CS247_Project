@@ -5,14 +5,6 @@ from pathlib import Path
 import pandas as pd
 import math
 
-def encode_onehot(labels):
-    classes = set(labels)
-    classes_dict = {c: np.identity(len(classes))[i, :] for i, c in
-                    enumerate(classes)}
-    labels_onehot = np.array(list(map(classes_dict.get, labels)),
-                             dtype=np.int32)
-    return labels_onehot
-
 def normalize(mx):
     """Row-normalize sparse matrix"""
     rowsum = np.array(mx.sum(1))
@@ -38,8 +30,8 @@ def sparse_mx_to_torch_sparse_tensor(sparse_mx):
     shape = torch.Size(sparse_mx.shape)
     return torch.sparse.FloatTensor(indices, values, shape)
 
-def multi_relation_load(path="../../data/twitter_1hop", label="dict.csv", 
-                        files=["friend_list.csv", "retweet_list.csv"]):
+def multi_relation_load(path="../data/", label="labels.csv", 
+                        files=["adj_phone.npz", "adj_app_installed.npz", "adj_app_active.npz"]):
     print("Loading data from path {0}".format(path))
     DATA = Path(path)
     FILE = [DATA/i for i in files]

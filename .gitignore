@@ -1,4 +1,3 @@
-*.csv
 *.zip
 .vs
 .vscode
@@ -7,3 +6,10 @@
 __pycache__/
 .pyc
 .ipynb_checkpoints
+data/app_events.csv
+data/app_labels.csv
+data/events.csv
+data/gender_age_train.csv
+data/label_categories.csv
+data/phone_brand_device_model.csv
+data/phone_model_device.csv
