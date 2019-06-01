@@ -4,6 +4,7 @@ import torch
 from pathlib import Path
 import pandas as pd
 import math
+import pickle
 
 def normalize(mx):
     """Row-normalize sparse matrix"""
@@ -31,66 +32,31 @@ def sparse_mx_to_torch_sparse_tensor(sparse_mx):
     return torch.sparse.FloatTensor(indices, values, shape)
 
 def multi_relation_load(path="../data/", label="labels.csv", 
-                        files=["adj_phone.npz", "adj_app_installed.npz", "adj_app_active.npz"]):
+                        files=["adj_phone.npz", "adj_app_installed.npz", "adj_app_active.npz"],
+                        train='train_idx', test='test_idx'):
     print("Loading data from path {0}".format(path))
     DATA = Path(path)
-    FILE = [DATA/i for i in files]
+    ADJS = [DATA/i for i in files]
     LABEL = DATA/label
-    data_dfs = []
-    label_df = pd.read_csv(LABEL, sep="\t")
-    for file in FILE:
-        data_dfs.append(pd.read_csv(file, sep="\t"))
-      
-    labeled_ids = label_df["twitter_id"].values
-    labels = [0 if v == "D" else 1 for v in label_df["party"].values]
-    n_labels = len(labels)
-    n_train = math.ceil(n_labels / 10. * 3)
-    n_valid = math.ceil(n_labels / 10. * 3)
-    idx_train = range(n_train)
-    idx_val = range(n_train, n_train + n_valid)
-    idx_test = range(n_train + n_valid, n_labels)
-    
-    print("\tprocessing nodes")
-    
-    all_ids = set()
-    for df in data_dfs:
-        all_ids = all_ids.union(set(df[df.columns[0]]))
-        all_ids = all_ids.union(set(df[df.columns[1]]))
-    unlabeled_ids = all_ids - set(labeled_ids)
-    all_id_list = np.concatenate((np.array(labeled_ids, dtype=np.int64), 
-                                 np.array(list(unlabeled_ids), dtype=np.int64)))
-    n_entities = len(all_id_list)
-    idx_map = {j: i for i, j in enumerate(all_id_list)}
-    
-    print("\tprocessing edges")
-
     adjs = []
+    label_df = pd.read_csv(LABEL)
+    for adj in ADJS:
+        adjs.append(sp.load_npz(adj))
     
-    for data_df in data_dfs:
-        from_idx = np.array(list(map(idx_map.get, data_df[data_df.columns[0]].values)), dtype=np.int64)
-        to_idx = np.array(list(map(idx_map.get, data_df[data_df.columns[1]].values)), dtype=np.int64)
-        counts = np.array(data_df[data_df.columns[2]].values, dtype=np.int64)
+    with open(DATA/train, 'rb') as f:
+        idx_train = pickle.load(f)
+    with open(DATA/test, 'rb') as f:
+        idx_test = pickle.load(DATA/test)
 
-        n_edges = len(from_idx)
+    labels = label_df['group'].values
 
-        adj = sp.csr_matrix((counts, (from_idx, to_idx)),
-                        shape=(n_entities, n_entities),
-                        dtype=np.float32)
-
-        # if build symmetric adjacency matrix
-        # adj = adj + adj.T.multiply(adj.T > adj) - adj.multiply(adj.T > adj)
-        # adj = normalize(adj + np.eye(adj.shape[0]))
-        # adjs.append(adj)
-        # otherwise
-        adjs.append(adj)
-        adjs.append(adj.T)
-    
-    edge_indexs = np.array(range(n_entities))
-    self_loop = sp.csr_matrix((np.ones(n_entities), (edge_indexs, edge_indexs)), 
-                              shape=(n_entities, n_entities), dtype=np.float32)
+    total_node = adjs[0].shape[0]
+    edge_indexs = np.array(range(total_node))
+    self_loop = sp.csr_matrix((np.ones(total_node), (edge_indexs, edge_indexs)), 
+                              shape=(total_node, total_node), dtype=np.float32)
     adjs.append(self_loop)
 
-    num_neighbors = [adjs[i].sum(1).reshape(n_entities, 1) for i in range(len(adjs))]    
+    num_neighbors = [adjs[i].sum(1).reshape(total_node, 1) for i in range(len(adjs))]    
     # num_neighbors = [np.diff(adjs[i].indptr).reshape(n_entities, 1) for i in range(len(adjs))]
     for neighbor in num_neighbors:
         neighbor += 1 # smoothing
@@ -99,19 +65,15 @@ def multi_relation_load(path="../data/", label="labels.csv",
     print("\tprocessing features")
     
     # edge_indexs = np.array(range(n_entities))
-    # features = sp.csr_matrix((np.ones(n_entities), (edge_indexs, edge_indexs)), shape=(n_entities, n_entities), dtype=np.float32) # dummy feature
-    features = np.ones((n_entities, 20))
+    features = sp.csr_matrix((np.ones(total_node), (edge_indexs, edge_indexs)), shape=(total_node, total_node), dtype=np.float32) # dummy feature
     
     print("\ttransfering into tensors")
-    
-    features = normalize(features)
-    # features = sparse_mx_to_torch_sparse_tensor(features)
-    features = torch.Tensor(features)
+
+    features = sparse_mx_to_torch_sparse_tensor(features)
     labels = torch.LongTensor(labels)
     adjs = [sparse_mx_to_torch_sparse_tensor(adj) for adj in adjs]
 
     idx_train = torch.LongTensor(idx_train)
-    idx_val = torch.LongTensor(idx_val)
     idx_test = torch.LongTensor(idx_test)
 
-    return adjs, features, labels, idx_train, idx_val, idx_test, num_neighbors
+    return adjs, features, labels, idx_train, idx_test, num_neighbors
