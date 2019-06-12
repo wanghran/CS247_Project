@@ -15,7 +15,7 @@ class rGCN(nn.Module):
     featureless forward function. First x input is a (n x n) all one matrix.
     '''
     def forward(self, x, adjs):
-        x = F.relu(self.gc1(x, adjs))
-        x = F.dropout(x, self.dropout, training=self.training)
+        x_encode = F.relu(self.gc1(x, adjs))
+        x = F.dropout(x_encode, self.dropout, training=self.training)
         x = self.gc2(x, adjs)
-        return F.log_softmax(x, dim=1)
+        return x, x_encode
