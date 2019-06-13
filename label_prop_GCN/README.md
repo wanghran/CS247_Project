@@ -1,4 +1,4 @@
-The code in this directory corresponds to our label propagated GCN model:
+# The code in this directory corresponds to our label propagated GCN model:
 
 ### 'preprocess_data.py' corresponds to preprocess data and generate the adjacent matrix, we put the generated matrix to data directory
 
