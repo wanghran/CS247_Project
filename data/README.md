@@ -13,3 +13,16 @@
 
 5. 'best_model.pth¡¯ is the trained model for label propagated GCN
 
+### hGCN 
+
+The prefix full_ indicates if the file is used as the small dataset or the full size dataset
+
+1. adj_app_active.npz, adj_app_installed.npz and adj_phone.npz are three adjacency matrices, which define the graph.
+
+2. labels.csv contains all the labels in the order of the node id in the graphs. 
+
+3. train_idx and test_idx are the lists of node ids from the train test splt. 
+
+4. full_train_yx and full_test_yx are the lists of device ids of the full size dataset. train_device_id and test_device_id are the lists of device ids of the small dataset. 
+
+5. label_mapping is a mapping that convert the labels codec in the labels.csv or full_labels.csv to the real class names. 
