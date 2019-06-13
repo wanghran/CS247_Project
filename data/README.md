@@ -5,14 +5,6 @@
 ### Baseline Models
 1. 'train_idx.npy' and 'test_idx.npy' contain the index of our train set (80%) and test set (20%) we keep it all the same across all the experiments
 
-2. '*.npz' contains the data after our preprocess. Usually the sparse matrixs that are directly used in our experiments
-
-3. 'active.npz' 'installed.npz' contains the adjacent matrix between user(each line) and APP£¬device(each column). We have 2 matrics because the for each user, there is app installed and app active £¨they share the same device information£©
-
-4. active_wapplabel.npz' contains the original features (concatenation of one-hot vector), it is mainly used in label propagation based GCN model and is concatenated to the feature get from label propagation
-
-5. 'best_model.pth¡¯ is the trained model for label propagated GCN
-
 ### hGCN 
 
 The prefix full_ indicates if the file is used as the small dataset or the full size dataset
@@ -26,3 +18,12 @@ The prefix full_ indicates if the file is used as the small dataset or the full 
 4. full_train_yx and full_test_yx are the lists of device ids of the full size dataset. train_device_id and test_device_id are the lists of device ids of the small dataset. 
 
 5. label_mapping is a mapping that convert the labels codec in the labels.csv or full_labels.csv to the real class names. 
+
+### label propagation based GCN 
+1. '*.npz' contains the data after our preprocess. Usually the sparse matrixs that are directly used in our experiments
+
+2. 'active.npz' 'installed.npz' contains the adjacent matrix between user(each line) and APP£¬device(each column). We have 2 matrics because the for each user, there is app installed and app active £¨they share the same device information£©
+
+3. active_wapplabel.npz' contains the original features (concatenation of one-hot vector), it is mainly used in label propagation based GCN model and is concatenated to the feature get from label propagation
+
+4. 'best_model.pth¡¯ is the trained model for label propagation based GCN
